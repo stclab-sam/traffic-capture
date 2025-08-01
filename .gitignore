@@ -1,0 +1,5 @@
+logs
+.idea
+*.iml
+.gor.pid
+.gor.pid.rotate
