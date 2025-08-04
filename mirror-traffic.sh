@@ -29,9 +29,59 @@ install_goreplay() {
             echo "지원하지 않는 운영체제입니다."
             exit 1
         fi
+
+        # GoReplay에 필요한 권한 설정
+        setup_goreplay_permissions
     else
         echo "GoReplay가 이미 설치되어 있습니다."
+        # 권한 확인
+        check_goreplay_permissions
     fi
+}
+
+# GoReplay 권한 설정 함수
+setup_goreplay_permissions() {
+    echo "GoReplay 실행 권한을 설정합니다..."
+
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        # Linux에서 setcap 사용
+        if command -v setcap &> /dev/null; then
+            echo "setcap을 사용하여 네트워크 권한을 부여합니다..."
+            sudo setcap cap_net_raw,cap_net_admin=eip /usr/local/bin/gor
+            if [ $? -eq 0 ]; then
+                echo "✅ GoReplay에 네트워크 권한이 부여되었습니다."
+                echo "이제 sudo 없이 실행할 수 있습니다."
+            else
+                echo "⚠️  setcap 설정에 실패했습니다. sudo 권한이 필요할 수 있습니다."
+            fi
+        else
+            echo "⚠️  setcap이 설치되어 있지 않습니다. sudo 권한이 필요합니다."
+        fi
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS에서는 여전히 sudo가 필요할 수 있음
+        echo "⚠️  macOS에서는 raw socket 접근을 위해 sudo 권한이 필요할 수 있습니다."
+        echo "대안으로 --input-tcp 또는 파일 기반 입력을 고려해보세요."
+    fi
+}
+
+# GoReplay 권한 확인 함수
+check_goreplay_permissions() {
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        # Linux에서 setcap 권한 확인
+        if command -v getcap &> /dev/null; then
+            local caps=$(getcap /usr/local/bin/gor 2>/dev/null)
+            if [[ "$caps" == *"cap_net_raw,cap_net_admin+eip"* ]]; then
+                echo "✅ GoReplay에 필요한 네트워크 권한이 설정되어 있습니다."
+                return 0
+            else
+                echo "⚠️  GoReplay 네트워크 권한이 설정되어 있지 않습니다."
+                echo "권한 설정을 위해 다음 명령어를 실행하세요:"
+                echo "sudo setcap cap_net_raw,cap_net_admin=eip /usr/local/bin/gor"
+                return 1
+            fi
+        fi
+    fi
+    return 1
 }
 
 # 내부 IP 주소 가져오기 함수
@@ -97,25 +147,60 @@ start_process() {
 
     echo "트래픽 미러링을 시작합니다..."
 
-    # sudo 권한 확인
-    echo "관리자 권한이 필요합니다."
-    if ! sudo -n true 2>/dev/null; then
-        sudo -v || { echo "sudo 권한을 얻을 수 없습니다."; exit 1; }
+    # GoReplay 실행 권한 확인
+    local use_sudo=false
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        # Linux에서 setcap 권한 확인
+        if ! check_goreplay_permissions; then
+            echo "⚠️  sudo 권한이 필요합니다."
+            use_sudo=true
+            if ! sudo -n true 2>/dev/null; then
+                sudo -v || { echo "sudo 권한을 얻을 수 없습니다."; exit 1; }
+            fi
+        else
+            echo "✅ sudo 없이 실행 가능합니다."
+        fi
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        # macOS에서는 대부분 sudo가 필요
+        echo "⚠️  macOS에서는 raw socket 접근을 위해 sudo 권한이 필요합니다."
+        use_sudo=true
+        if ! sudo -n true 2>/dev/null; then
+            sudo -v || { echo "sudo 권한을 얻을 수 없습니다."; exit 1; }
+        fi
     fi
 
     # GoReplay 실행 - 분 단위 로테이션
-    sudo gor \
-        --input-raw :$PORT \
-        --output-file "$LOG_FILE" \
-        --output-file-flush-interval=5s \
-        --output-file-append \
-        --http-allow-method=GET \
-        --http-allow-method=POST \
-        --http-allow-method=PUT \
-        --http-allow-method=DELETE \
-        --http-allow-method=PATCH \
-        --http-disallow-url '.*\.(css|js|png|jpe?g|gif|ico|svg|woff2?|ttf|eot|pdf|zip|mp4|avi|mov|html?|htm)(\?.*)?$' \
-        &
+    if [ "$use_sudo" = true ]; then
+        echo "sudo를 사용하여 GoReplay를 실행합니다..."
+        sudo gor \
+            --input-raw :$PORT \
+            --input-raw-protocol http \
+            --output-file "$LOG_FILE" \
+            --output-file-flush-interval=5s \
+            --output-file-append \
+            --http-allow-method=GET \
+            --http-allow-method=POST \
+            --http-allow-method=PUT \
+            --http-allow-method=DELETE \
+            --http-allow-method=PATCH \
+            --http-disallow-url '.*\.(css|js|png|jpe?g|gif|ico|svg|woff2?|ttf|eot|pdf|zip|mp4|avi|mov|html?|htm)(\?.*)?$' \
+            &
+    else
+        echo "일반 사용자 권한으로 GoReplay를 실행합니다..."
+        gor \
+            --input-raw :$PORT \
+            --input-raw-protocol http \
+            --output-file "$LOG_FILE" \
+            --output-file-flush-interval=5s \
+            --output-file-append \
+            --http-allow-method=GET \
+            --http-allow-method=POST \
+            --http-allow-method=PUT \
+            --http-allow-method=DELETE \
+            --http-allow-method=PATCH \
+            --http-disallow-url '.*\.(css|js|png|jpe?g|gif|ico|svg|woff2?|ttf|eot|pdf|zip|mp4|avi|mov|html?|htm)(\?.*)?$' \
+            &
+    fi
 
     local gor_pid=$!
     echo $gor_pid > "$PID_FILE"

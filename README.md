@@ -13,9 +13,26 @@
 ## 시스템 요구사항
 
 - macOS 또는 Linux
-- sudo 권한 (GoReplay는 raw socket을 사용하므로 관리자 권한 필요)
+- sudo 권한 (초기 설치 및 권한 설정용)
 - curl, tar (GoReplay 설치용)
 - gzip (로그 압축용)
+
+### Linux에서 sudo 없이 실행하기
+
+Linux 환경에서는 `setcap`을 사용하여 GoReplay에 네트워크 권한을 부여한 후 sudo 없이 실행할 수 있습니다:
+
+```bash
+# GoReplay 설치 후 권한 설정 (한 번만 실행)
+sudo setcap cap_net_raw,cap_net_admin=eip /usr/local/bin/gor
+
+# 권한 확인
+getcap /usr/local/bin/gor
+
+# 이후 sudo 없이 실행 가능
+make start PORT=8080
+```
+
+**참고**: macOS에서는 raw socket 접근을 위해 여전히 sudo 권한이 필요할 수 있습니다.
 
 ## 설치 및 사용법
 
